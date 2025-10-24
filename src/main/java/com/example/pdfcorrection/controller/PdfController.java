@@ -1,5 +1,6 @@
 package com.example.pdfcorrection.controller;
 
+import com.example.pdfcorrection.model.CorrectionResult;
 import com.example.pdfcorrection.service.PdfCorrectionService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.Resource;
@@ -34,7 +35,7 @@ public class PdfController {
             }
 
             // 一次性完成角度检测和PDF校正，避免重复使用MultipartFile
-            PdfCorrectionService.CorrectionResult result = pdfCorrectionService.correctPdfSkewWithAngle(file);
+            CorrectionResult result = pdfCorrectionService.correctPdfSkewWithAngle(file);
             
             return ResponseEntity.ok()
                     .body(new UploadResponse(true, "PDF校正成功", result.getFileName(), result.getPageAngles()));
