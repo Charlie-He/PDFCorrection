@@ -2,6 +2,7 @@ package com.example.pdfcorrection.controller;
 
 import com.example.pdfcorrection.model.CorrectionResult;
 import com.example.pdfcorrection.service.PdfCorrectionService;
+import com.example.pdfcorrection.service.ProgressService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.Resource;
 import org.springframework.http.HttpHeaders;
@@ -9,11 +10,14 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.net.URLEncoder;
 import java.io.UnsupportedEncodingException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 @RestController
 @RequestMapping("/api/pdf")
@@ -22,6 +26,11 @@ public class PdfController {
 
     @Autowired
     private PdfCorrectionService pdfCorrectionService;
+    
+    @Autowired
+    private ProgressService progressService;
+
+    private final ExecutorService executorService = Executors.newCachedThreadPool();
 
     @PostMapping("/upload")
     public ResponseEntity<?> uploadAndCorrectPdf(@RequestParam("file") MultipartFile file) {
@@ -46,6 +55,11 @@ public class PdfController {
             return ResponseEntity.internalServerError()
                     .body(new UploadResponse(false, "处理失败: " + e.getMessage(), null, new ArrayList<>()));
         }
+    }
+    
+    @GetMapping("/progress")
+    public SseEmitter getProgress() {
+        return progressService.createEmitter();
     }
 
     @GetMapping("/download/{fileName}")

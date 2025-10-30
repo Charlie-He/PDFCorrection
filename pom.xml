@@ -39,7 +39,14 @@
         <dependency>
             <groupId>org.openpnp</groupId>
             <artifactId>opencv</artifactId>
-            <version>4.7.0-0</version>
+            <version>4.9.0-0</version>
+        </dependency>
+
+        <!-- ONNX Runtime (轻量 CNN 倾斜角推理) -->
+        <dependency>
+            <groupId>com.microsoft.onnxruntime</groupId>
+            <artifactId>onnxruntime</artifactId>
+            <version>1.18.0</version>
         </dependency>
 
         <!-- Commons IO -->

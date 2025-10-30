@@ -29,8 +29,21 @@
         :show="isProcessing"
         type="bar"
         :progress="progressValue"
-        message="正在处理中，请稍候..."
+        :message="progressMessage"
       />
+
+      <div v-if="processSteps.length > 0" class="process-steps">
+        <h3>处理进度:</h3>
+        <ul>
+          <li 
+            v-for="(step, index) in processSteps" 
+            :key="index" 
+            :class="{ 'completed': step.completed, 'current': step.current }"
+          >
+            {{ step.message }}
+          </li>
+        </ul>
+      </div>
 
       <div v-if="errorMessage" class="error-message">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
@@ -50,17 +63,18 @@
           <span>校正完成！</span>
         </div>
         
-        <div class="correction-info">
-          <div v-if="pageAngles && pageAngles.length > 0" class="page-angles">
-            <h3>各页面倾斜角度：</h3>
-            <ul>
-              <li v-for="(angle, index) in pageAngles" :key="index">
-                第 {{ index + 1 }} 页: {{ angle.toFixed(2) }}°
-              </li>
-            </ul>
+        <div class="correction-info" v-if="processingTime > 0">
+          <div>
+            <div>
+              <p>各页面的倾斜角度详情:</p>
+              <ul>
+                <li v-for="(angle, index) in pageAngles" :key="index">
+                  第{{ index + 1 }}页: {{ angle.toFixed(2) }}°
+                </li>
+              </ul>
+            </div>
           </div>
-          <p v-else>检测到的倾斜角度: {{ detectedAngle.toFixed(2) }}°</p>
-          <p>处理耗时: {{ processingTime.toFixed(2) }}秒</p>
+          <p>处理耗时: {{ processingTime.toFixed(2) }}s</p>
         </div>
 
         <div class="action-buttons">
@@ -145,12 +159,15 @@ export default {
       originalPdfUrl: null,
       correctedPdfUrl: null,
       previewPdfUrl: null,
-      detectedAngle: 0,
+      detectedAngle: null,
       pageAngles: [],
       processingTime: 0,
       startTime: 0,
       progressValue: 0,
-      progressInterval: null
+      progressInterval: null,
+      progressMessage: '正在处理中，请稍候...',
+      processSteps: [], // 处理步骤数组
+      eventSource: null
     };
   },
   methods: {
@@ -220,6 +237,40 @@ export default {
       }
     },
 
+    // 添加处理步骤
+    addProcessStep(message) {
+      this.processSteps.push({
+        message: message,
+        completed: true,
+        current: false
+      });
+      
+      // 检查是否是总用时信息
+      if (message.startsWith('总用时:')) {
+        // 提取处理时间（秒）
+        const timeMatch = message.match(/总用时:\s*([\d.]+)s/);
+        if (timeMatch && timeMatch[1]) {
+          this.processingTime = parseFloat(timeMatch[1]);
+        }
+      }
+    },
+
+    // 更新当前处理步骤
+    updateCurrentStep(message) {
+      // 将之前的步骤标记为完成
+      this.processSteps.forEach(step => {
+        step.current = false;
+        step.completed = true;
+      });
+      
+      // 添加新的当前步骤
+      this.processSteps.push({
+        message: message,
+        completed: false,
+        current: true
+      });
+    },
+
     async uploadAndCorrect() {
       if (!this.selectedFile) {
         this.errorMessage = '未选择文件';
@@ -230,13 +281,33 @@ export default {
       this.errorMessage = '';
       this.startTime = Date.now();
       this.progressValue = 0;
+      this.processSteps = []; // 清空之前的步骤
+      this.detectedAngle = null; // 重置角度显示
       
+      // 建立SSE连接以接收实时进度更新
+      this.eventSource = new EventSource('http://localhost:8080/api/pdf/progress');
+      
+      this.eventSource.addEventListener('progress', (event) => {
+        this.addProcessStep(event.data);
+      });
+      
+      this.eventSource.addEventListener('angle', (event) => {
+        this.detectedAngle = parseFloat(event.data);
+      });
+      
+      this.eventSource.onerror = (error) => {
+        console.error('SSE连接错误:', error);
+      };
+
       // 模拟进度条增长
       this.progressInterval = setInterval(() => {
         if (this.progressValue < 90) {
           this.progressValue += 5;
         }
       }, 100);
+
+      // 显示开始处理信息
+      this.updateCurrentStep('开始处理PDF文件...');
 
       const formData = new FormData();
       formData.append('file', this.selectedFile);
@@ -245,6 +316,12 @@ export default {
         const response = await axios.post('http://localhost:8080/api/pdf/upload', formData, {
           headers: {
             'Content-Type': 'multipart/form-data'
+          },
+          onUploadProgress: (progressEvent) => {
+            if (progressEvent.lengthComputable) {
+              const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+              this.progressValue = Math.min(percentCompleted, 90);
+            }
           }
         });
 
@@ -267,7 +344,11 @@ export default {
             this.detectedAngle = response.data.angle || 0;
           }
           
-          this.processingTime = (Date.now() - this.startTime) / 1000;
+          // 完成所有步骤
+          this.processSteps.forEach(step => {
+            step.current = false;
+            step.completed = true;
+          });
         } else {
           this.errorMessage = response.data.message || '处理失败';
         }
@@ -293,6 +374,12 @@ export default {
           clearInterval(this.progressInterval);
           this.progressInterval = null;
           this.progressValue = 100;
+        }
+        
+        // 关闭SSE连接
+        if (this.eventSource) {
+          this.eventSource.close();
+          this.eventSource = null;
         }
       }
     },
@@ -330,12 +417,25 @@ export default {
       this.pageAngles = [];
       this.errorMessage = '';
       this.progressValue = 0;
+      this.detectedAngle = null;
+      this.processSteps = [];
+      
+      // 关闭事件源
+      if (this.eventSource) {
+        this.eventSource.close();
+        this.eventSource = null;
+      }
     }
   },
   
   beforeUnmount() {
     if (this.progressInterval) {
       clearInterval(this.progressInterval);
+    }
+    
+    // 关闭事件源
+    if (this.eventSource) {
+      this.eventSource.close();
     }
   }
 };
@@ -516,6 +616,76 @@ export default {
   border: none;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
   border-radius: 4px;
+}
+
+/* 处理步骤样式 */
+.process-steps {
+  background: rgba(255, 255, 255, 0.9);
+  border-radius: 8px;
+  padding: 15px;
+  margin: 20px 0;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+.process-steps h3 {
+  color: #333;
+  margin-bottom: 10px;
+  text-align: center;
+}
+
+.process-steps ul {
+  list-style-type: none;
+  padding-left: 0;
+}
+
+.process-steps li {
+  padding: 8px 0 8px 30px;
+  color: #555;
+  font-family: 'Courier New', monospace;
+  border-bottom: 1px solid #eee;
+  position: relative;
+}
+
+.process-steps li:last-child {
+  border-bottom: none;
+}
+
+.process-steps li.completed::before {
+  content: "✓";
+  position: absolute;
+  left: 10px;
+  color: #10b981;
+  font-weight: bold;
+}
+
+.process-steps li.current::before {
+  content: "→";
+  position: absolute;
+  left: 10px;
+  color: #667eea;
+  font-weight: bold;
+  animation: blink 1s infinite;
+}
+
+@keyframes blink {
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.angle-display {
+  background: rgba(255, 255, 255, 0.9);
+  border-radius: 8px;
+  padding: 15px;
+  margin: 20px 0;
+  text-align: center;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  color: #333;
+}
+
+.angle-display h3 {
+  margin: 0;
+  font-weight: 600;
 }
 
 @media (max-width: 768px) {
