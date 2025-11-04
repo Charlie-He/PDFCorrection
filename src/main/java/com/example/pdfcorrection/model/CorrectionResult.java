@@ -10,7 +10,7 @@ public class CorrectionResult {
     private final String fileName;
     private final List<Double> pageAngles;
 
-    public CorrectionResult(String fileName, List<Double> pageAngles) {
+    public CorrectionResult(String fileName, List<Double> pageAngles, long totalTime) {
         this.fileName = fileName;
         this.pageAngles = pageAngles;
     }
