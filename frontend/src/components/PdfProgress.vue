@@ -7,13 +7,16 @@
       ></div>
       
       <div 
-        class="pdf-progress__bar"
+        class="pdf-progress__bar-container"
         v-else-if="type === 'bar'"
       >
-        <div 
-          class="pdf-progress__bar-fill"
-          :style="{ width: `${progress}%` }"
-        ></div>
+        <div class="pdf-progress__bar">
+          <div 
+            class="pdf-progress__bar-fill"
+            :style="{ width: `${progress}%` }"
+          ></div>
+        </div>
+        <div class="pdf-progress__percentage">{{ progress }}%</div>
       </div>
     </div>
     
@@ -36,7 +39,7 @@ export default {
     },
     message: {
       type: String,
-      default: '处理中...'
+      default: ''
     },
     progress: {
       type: Number,
@@ -74,14 +77,20 @@ export default {
   }
 }
 
+.pdf-progress__bar-container {
+  display: flex;
+  align-items: center;
+  max-width: 400px;
+  margin: 0 auto 20px;
+  gap: 15px;
+}
+
 .pdf-progress__bar {
-  width: 100%;
+  flex: 1;
   height: 12px;
   background: rgba(255, 255, 255, 0.2);
   border-radius: 6px;
   overflow: hidden;
-  margin: 0 auto 20px;
-  max-width: 400px;
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 }
 
@@ -90,6 +99,13 @@ export default {
   background: linear-gradient(90deg, #667eea, #764ba2);
   border-radius: 6px;
   transition: width 0.3s ease;
+}
+
+.pdf-progress__percentage {
+  font-size: 1.1rem;
+  font-weight: 500;
+  min-width: 50px;
+  text-align: right;
 }
 
 .pdf-progress__message {

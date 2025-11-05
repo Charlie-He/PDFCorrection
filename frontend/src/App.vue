@@ -38,7 +38,7 @@
           <li 
             v-for="(step, index) in processSteps" 
             :key="index" 
-            :class="{ 'completed': step.completed, 'current': step.current }"
+            :class="{ 'completed': step.completed, 'current': step.current, 'total-time': step.isTotalTime }"
           >
             {{ step.message }}
           </li>
@@ -165,9 +165,11 @@ export default {
       startTime: 0,
       progressValue: 0,
       progressInterval: null,
-      progressMessage: '正在处理中，请稍候...',
+      progressMessage: '',
       processSteps: [], // 处理步骤数组
-      eventSource: null
+      eventSource: null,
+      totalBatches: 0, // 总批次数
+      currentBatch: 0  // 当前批次数
     };
   },
   methods: {
@@ -239,19 +241,28 @@ export default {
 
     // 添加处理步骤
     addProcessStep(message) {
-      this.processSteps.push({
-        message: message,
-        completed: true,
-        current: false
-      });
-      
-      // 检查是否是总用时信息
-      if (message.startsWith('总用时:')) {
+      // 检查是否是总用时信息（包括批次总用时和最终总用时）
+      if (message.startsWith('总用时:') || message.includes(' 总用时:')) {
+        // 对总用时信息加粗显示
+        this.processSteps.push({
+          message: message,
+          completed: true,
+          current: false,
+          isTotalTime: true // 标记为总用时信息
+        });
+        
         // 提取处理时间（秒）
         const timeMatch = message.match(/总用时:\s*([\d.]+)s/);
         if (timeMatch && timeMatch[1]) {
           this.processingTime = parseFloat(timeMatch[1]);
         }
+      } else {
+        this.processSteps.push({
+          message: message,
+          completed: true,
+          current: false,
+          isTotalTime: false
+        });
       }
     },
 
@@ -267,7 +278,8 @@ export default {
       this.processSteps.push({
         message: message,
         completed: false,
-        current: true
+        current: true,
+        isTotalTime: false
       });
     },
 
@@ -283,12 +295,36 @@ export default {
       this.progressValue = 0;
       this.processSteps = []; // 清空之前的步骤
       this.detectedAngle = null; // 重置角度显示
+      this.totalBatches = 0; // 重置批次计数
+      this.currentBatch = 0; // 重置当前批次
       
       // 建立SSE连接以接收实时进度更新
       this.eventSource = new EventSource('http://localhost:8080/api/pdf/progress');
       
       this.eventSource.addEventListener('progress', (event) => {
-        this.addProcessStep(event.data);
+        const message = event.data;
+        this.addProcessStep(message);
+        
+        // 解析批次信息并更新进度
+        const batchRegex = /批次 (\d+)\/(\d+) .*/;
+        const match = message.match(batchRegex);
+        if (match) {
+          this.currentBatch = parseInt(match[1]);
+          this.totalBatches = parseInt(match[2]);
+          // 计算进度百分比 (使用更平滑的计算方式)
+          if (this.totalBatches > 0) {
+            // 为了让进度条看起来更平滑，我们使用 90% 作为批次处理的最大值
+            // 剩下的10%留给最后的保存操作
+            const batchProgress = (this.currentBatch - 1) / this.totalBatches;
+            this.progressValue = Math.round(batchProgress * 90);
+          }
+        }
+        
+        // 检查是否是总用时信息或者处理完成信息
+        if (message.startsWith('总用时:') || message === '处理完成') {
+          // 确保进度条达到100%
+          this.progressValue = 100;
+        }
       });
       
       this.eventSource.addEventListener('angle', (event) => {
@@ -298,13 +334,6 @@ export default {
       this.eventSource.onerror = (error) => {
         console.error('SSE连接错误:', error);
       };
-
-      // 模拟进度条增长
-      this.progressInterval = setInterval(() => {
-        if (this.progressValue < 90) {
-          this.progressValue += 5;
-        }
-      }, 100);
 
       // 显示开始处理信息
       this.updateCurrentStep('开始处理PDF文件...');
@@ -316,22 +345,11 @@ export default {
         const response = await axios.post('http://localhost:8080/api/pdf/upload', formData, {
           headers: {
             'Content-Type': 'multipart/form-data'
-          },
-          onUploadProgress: (progressEvent) => {
-            if (progressEvent.lengthComputable) {
-              const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
-              this.progressValue = Math.min(percentCompleted, 90);
-            }
           }
         });
 
         // 确保进度条达到100%
         this.progressValue = 100;
-        
-        if (this.progressInterval) {
-          clearInterval(this.progressInterval);
-          this.progressInterval = null;
-        }
 
         if (response.data.success) {
           this.correctedFile = response.data.fileName;
@@ -354,10 +372,6 @@ export default {
         }
       } catch (error) {
         console.error('文件上传失败:', error);
-        if (this.progressInterval) {
-          clearInterval(this.progressInterval);
-          this.progressInterval = null;
-        }
         
         if (error.response && error.response.data && error.response.data.message) {
           this.errorMessage = error.response.data.message;
@@ -370,11 +384,7 @@ export default {
         }
       } finally {
         this.isProcessing = false;
-        if (this.progressInterval) {
-          clearInterval(this.progressInterval);
-          this.progressInterval = null;
-          this.progressValue = 100;
-        }
+        this.progressValue = 100;
         
         // 关闭SSE连接
         if (this.eventSource) {
@@ -419,6 +429,8 @@ export default {
       this.progressValue = 0;
       this.detectedAngle = null;
       this.processSteps = [];
+      this.totalBatches = 0;
+      this.currentBatch = 0;
       
       // 关闭事件源
       if (this.eventSource) {
@@ -448,16 +460,42 @@ export default {
   box-sizing: border-box;
 }
 
+/* 保证根元素在需要时可以滚动，不需要时不显示滚动条 */
+html, body {
+  width: 100%;
+  min-height: 100%;
+  overflow-y: auto; /* 内容超出时显示滚动条，不超出时不显示 */
+  margin: 0;
+  padding: 0;
+}
+
+/* 整个应用区域 */
 #app {
-  min-height: 100vh;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  padding: 40px 20px;
+  width: 100%;
+  min-height: 100vh; /* 至少占满整个视口高度 */
+  background-image: url('@/images/背景.webp');
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-attachment: fixed;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
 }
 
+/* 主内容区域 */
 .container {
+  width: 100%;
   max-width: 800px;
-  margin: 0 auto;
+  min-height: calc(100vh - 60px);
+  margin-top: 30px;
+  padding: 20px 20px 40px;
+  scrollbar-width: none; /* Firefox 隐藏滚动条 */
+}
+
+.container::-webkit-scrollbar {
+  display: none; /* Chrome 隐藏滚动条 */
 }
 
 .title {
@@ -486,12 +524,12 @@ export default {
   .action-buttons {
     grid-template-columns: 1fr;
   }
-  
+
   .title {
     font-size: 1.5rem;
     margin-bottom: 30px;
   }
-  
+
   .upload-section {
     padding: 20px;
   }
@@ -551,8 +589,8 @@ export default {
   font-weight: 500;
 }
 
-.correction-info h3 {
-  margin-bottom: 10px;
+.correction-info > div > div {
+  margin-bottom: 15px;
 }
 
 .correction-info ul {
@@ -563,19 +601,11 @@ export default {
   display: inline-block;
 }
 
-.correction-info li {
-  margin: 5px 0;
-}
-
-.correction-info p {
-  margin: 5px 0;
-}
-
 .reset-button {
   margin-top: 20px;
 }
 
-/* 预览模态框样式 */
+/* 预览模态框 */
 .preview-modal {
   width: 95vw;
   height: 90vh;
@@ -593,10 +623,6 @@ export default {
   color: #667eea;
   margin-bottom: 15px;
   font-size: 1.2rem;
-}
-
-.single-preview {
-  padding: 10px;
 }
 
 .pdf-viewer {
@@ -618,7 +644,7 @@ export default {
   border-radius: 4px;
 }
 
-/* 处理步骤样式 */
+/* 步骤条 */
 .process-steps {
   background: rgba(255, 255, 255, 0.9);
   border-radius: 8px;
@@ -636,6 +662,7 @@ export default {
 .process-steps ul {
   list-style-type: none;
   padding-left: 0;
+  margin: 0;
 }
 
 .process-steps li {
@@ -644,10 +671,6 @@ export default {
   font-family: 'Courier New', monospace;
   border-bottom: 1px solid #eee;
   position: relative;
-}
-
-.process-steps li:last-child {
-  border-bottom: none;
 }
 
 .process-steps li.completed::before {
@@ -667,50 +690,14 @@ export default {
   animation: blink 1s infinite;
 }
 
-@keyframes blink {
-  50% {
-    opacity: 0.5;
-  }
-}
-
-.angle-display {
-  background: rgba(255, 255, 255, 0.9);
-  border-radius: 8px;
-  padding: 15px;
-  margin: 20px 0;
-  text-align: center;
-  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+.process-steps li.total-time {
+  font-weight: bold;
   color: #333;
 }
 
-.angle-display h3 {
-  margin: 0;
-  font-weight: 600;
-}
-
-@media (max-width: 768px) {
-  .compare-container {
-    grid-template-columns: 1fr;
-  }
-  
-  .pdf-viewer {
-    min-height: 500px;
-    padding: 10px;
-  }
-  
-  .pdf-viewer iframe {
-    height: 500px;
-  }
-  
-  .preview-modal {
-    width: 100%;
-    height: 100%;
-    border-radius: 0;
-  }
-  
-  .success-section,
-  .upload-section {
-    padding: 20px;
+@keyframes blink {
+  50% {
+    opacity: 0.5;
   }
 }
 </style>
